@@ -14,7 +14,8 @@ def transpose_weights(weights):
 
 def get_pt_layers(pt_model):
     layers = {}
-    for k, v in pt_model.state_dict().items():
+    state_dict = pt_model.state_dict() if not isinstance(pt_model, dict) else pt_model
+    for k, v in state_dict.items():
         layer_name = '.'.join(k.split('.')[:-1])
         if layer_name not in layers: layers[layer_name] = []
         layers[layer_name].append(v.cpu().numpy())
@@ -50,7 +51,7 @@ def pt_convert_model_weights(pt_model, tf_model, verbose = False):
                 [tuple(v.shape) for v in converted_variables],
             ))
     
-    tf_model.set_weights(converted_weights)
+    partial_transfert_learning(tf_model, converted_weights)
     print("Weights converted successfully !")
     
     
@@ -58,7 +59,8 @@ def pt_convert_model_weights(pt_model, tf_model, verbose = False):
 
 def get_tf_layers(tf_model):
     layers = {}
-    for v in tf_model.variables:
+    variables = tf_model.variables if not isinstance(tf_model, list) else tf_model
+    for v in variables:
         layer_name = '/'.join(v.name.split('/')[:-1])
         if layer_name not in layers: layers[layer_name] = []
         layers[layer_name].append(v.numpy())
@@ -105,37 +107,50 @@ def tf_convert_model_weights(tf_model, pt_model, verbose = False):
 
 """ Partial transfert learning """
 
-def transfer_weights(target_model, pretrained_model):
+def partial_transfert_learning(target_model, pretrained_model, partial_transfert = True):
+    target_variables = target_model.variables if not isinstance(target_model, list) else target_model
+    pretrained_variables = pretrained_model.variables if not isinstance(pretrained_model, list) else pretrained_model
+    
     new_weights = []
-    target_variables = target_model.variables
-    pretrained_variables = pretrained_model.variables
-    for i in range(len(target_variables)):
-        if len(target_variables[i].shape) != len(pretrained_variables[i].shape):
-            raise ValueError("Le nombre de dimension des variables {} est différent !\n  Target shape : {}\n  Pretrained shape : {}".format(i, target_variables[i].shape, pretrained_variables[i].shape))
+    for i, (v, pretrained_v) in enumerate(zip(target_variables, pretrained_variables)):
+        if len(v.shape) != len(pretrained_v.shape):
+            raise ValueError("Le nombre de dimension des variables {} est différent !\n  Target shape : {}\n  Pretrained shape : {}".format(i, v.shape, pretrained_v.shape))
         
-        new_v = target_variables[i].numpy()
-        v = pretrained_variables[i].numpy()
-        if new_v.ndim == 1:
-            max_0 = min(new_v.shape[0], v.shape[0])
-            new_v[:max_0] = v[:max_0]
-        elif new_v.ndim == 2:
-            max_0 = min(new_v.shape[0], v.shape[0])
-            max_1 = min(new_v.shape[1], v.shape[1])
-            new_v[:max_0, :max_1] = v[:max_0, :max_1]
-        elif new_v.ndim == 3:
-            max_0 = min(new_v.shape[0], v.shape[0])
-            max_1 = min(new_v.shape[1], v.shape[1])
-            max_2 = min(new_v.shape[2], v.shape[2])
-            new_v[:max_0, :max_1, :max_2] = v[:max_0, :max_1, :max_2]
-        elif new_v.ndim == 4:
-            max_0 = min(new_v.shape[0], v.shape[0])
-            max_1 = min(new_v.shape[1], v.shape[1])
-            max_2 = min(new_v.shape[2], v.shape[2])
-            max_3 = min(new_v.shape[3], v.shape[3])
-            new_v[:max_0, :max_1, :max_2, :max_3] = v[:max_0, :max_1, :max_2, :max_3]
+        v = v.numpy()
+        if not isinstance(pretrained_v, np.ndarray) : pretrained_v = pretrained_v.numpy()
+        
+        
+        if v.shape == pretrained_v.shape:
+            new_weights.append(pretrained_v)
         else:
-            raise ValueError("Variable dims > 4 non géré !")
-        new_weights.append(new_v)
+            if not partial_transfert:
+                print("Variables {} shapes mismatch ({} vs {}), skipping it".format(i, v.shape, pretrained_v.shape))
+                new_weights.append(v)
+                continue
+            
+            print("Variables {} shapes mismatch ({} vs {}), making partial transfert".format(i, v.shape, pretrained_v.shape))
+        
+            if v.ndim == 1:
+                max_0 = min(v.shape[0], pretrained_v.shape[0])
+                v[:max_0] = pretrained_v[:max_0]
+            elif v.ndim == 2:
+                max_0 = min(v.shape[0], pretrained_v.shape[0])
+                max_1 = min(v.shape[1], pretrained_v.shape[1])
+                v[:max_0, :max_1] = pretrained_v[:max_0, :max_1]
+            elif v.ndim == 3:
+                max_0 = min(v.shape[0], pretrained_v.shape[0])
+                max_1 = min(v.shape[1], pretrained_v.shape[1])
+                max_2 = min(v.shape[2], pretrained_v.shape[2])
+                v[:max_0, :max_1, :max_2] = pretrained_v[:max_0, :max_1, :max_2]
+            elif v.ndim == 4:
+                max_0 = min(v.shape[0], pretrained_v.shape[0])
+                max_1 = min(v.shape[1], pretrained_v.shape[1])
+                max_2 = min(v.shape[2], pretrained_v.shape[2])
+                max_3 = min(v.shape[3], pretrained_v.shape[3])
+                v[:max_0, :max_1, :max_2, :max_3] = pretrained_v[:max_0, :max_1, :max_2, :max_3]
+            else:
+                raise ValueError("Variable dims > 4 non géré !")
+            new_weights.append(v)
     
     target_model.set_weights(new_weights)
     print("Weights transfered successfully !")
